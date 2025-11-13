@@ -1,0 +1,26 @@
+pointbert:
+  pretrained_backbone_filename: 20_epochs_1024_best.pth
+  network:
+    trans_dim: 384
+    depth: 12
+    drop_path_rate: 0.1
+    num_classes: ${dataset.num_classes} #same as num_classes
+    num_heads: 6
+    group_size: 32
+    num_group: ${floordiv:${dataset.npoints},32}
+    encoder_dims: 256
+
+
+  training:
+    step_size: 20
+    lr_decay: 0.5
+    decay_rate: 5e-2
+    lr: 0.0005
+    batch_size: 16
+    num_workers: 8
+    early_stop_patience: 50
+    epochs: ${epochs}
+    warmup_epochs: 10
+    grad_norm_clip : 10
+
+
