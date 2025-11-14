@@ -9,7 +9,7 @@ from models.modules import Group, Encoder, TransformerEncoder
 from lightning.pytorch.loggers import MLFlowLogger
 
 class PointTransformer(L.LightningModule):
-    def __init__(self, dataset_cfg, network_cfg, train_cfg, **kwargs):
+    def __init__(self, network_cfg, train_cfg, **kwargs):
         super().__init__()
         self.save_hyperparameters()
         self.train_cfg = train_cfg
