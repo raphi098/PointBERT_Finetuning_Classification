@@ -107,7 +107,8 @@ class PointTransformer(L.LightningModule):
 
         # metrics
         loss = {}
-        loss["train/loss" if train else "val/loss"] = self.loss_ce(class_pred, class_label_flat)       # [B, C] logits
+        loss["train/loss" if train else "val/loss"] = self.loss_ce(class_pred_flat, class_label_flat)
+        self.log("train/loss" if train else "val/loss", loss["train/loss" if train else "val/loss"])       # [B, C] logits
 
         if not train:
             for key, value in self.val_metrics.keys():
