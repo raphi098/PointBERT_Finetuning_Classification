@@ -68,20 +68,24 @@ class PointTransformer(L.LightningModule):
             cat_dict = json.load(f)
             for key in cat_dict.keys():
                 self.class_names.append((cat_dict[key], key))
+        
+        self.val_metrics = {}
 
         if self.num_classes == 2:
-            self.confusion_matrix = BinaryConfusionMatrix()
             self.precision = BinaryAveragePrecision()
             self.recall = BinaryRecall()
             self.accuracy = BinaryAccuracy()    
             self.f1_score = BinaryF1Score()
+            self.confusion_matrix = BinaryConfusionMatrix()
         else:
             self.confusion_matrix = MulticlassConfusionMatrix(num_classes=self.num_classes)
             self.precision = MulticlassAveragePrecision(num_classes=self.num_classes, average="weighted")
             self.recall = MulticlassRecall(num_classes=self.num_classes, average="weighted")
             self.accuracy = MulticlassAccuracy(num_classes=self.num_classes, average="weighted")
             self.f1_score = MulticlassF1Score(num_classes=self.num_classes, average="weighted")
-            
+
+        self.test_metrics = self.val_metrics.copy()
+        self.test_metrics["confusion_matrix"] = self.confusion_matrix
     def training_step(self, batch, batch_idx):
         loss = self._common_step(batch, train=True)
         return loss
@@ -102,18 +106,24 @@ class PointTransformer(L.LightningModule):
         class_pred_flat  = class_pred.reshape(-1, self.num_classes)  # [B, C]
 
         # metrics
-        metrics = {}
-        metrics["train/acc" if train else "val/acc"]   = (label_id == class_label).float().mean()
-        metrics["train/loss" if train else "val/loss"] = self.loss_ce(class_pred, class_label_flat)       # [B, C] logits
+        loss = {}
+        loss["train/loss" if train else "val/loss"] = self.loss_ce(class_pred, class_label_flat)       # [B, C] logits
+
         if not train:
-            metrics["val/f1_score"] = self.f1_score(class_pred_flat, class_label_flat)
-            metrics["val/precision"] = self.precision(class_pred_flat, class_label_flat)
-            metrics["val/recall"] = self.recall(class_pred_flat, class_label_flat)
+            for key, value in self.val_metrics.keys():
+                self.val_metrics[key].update(class_pred_flat, class_label_flat)
+                self.log(f"val/{key}", self.val_metrics[key], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
-        for key, value in metrics.items():
-            self.log(key, value, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-        return metrics["train/loss" if train else "val/loss"]
-
+        return loss["train/loss" if train else "val/loss"]
+    def on_train_epoch_end(self):
+        self.precision.reset()
+        self.recall.reset()
+        self.accuracy.reset()
+    def on_validation_epoch_end(self):
+        self.precision.reset()
+        self.recall.reset()
+        self.accuracy.reset()
+        self.f1_score.reset()
     def test_step(self, batch, batch_idx):
         points, class_label = batch  # [B, N, C], [B, N], [B]
 
