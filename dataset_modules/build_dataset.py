@@ -26,4 +26,3 @@ class BuildDataloaderModule(L.LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.dataset_test, batch_size=self.batch_size, num_workers=8)
-

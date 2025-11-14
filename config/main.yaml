@@ -9,7 +9,7 @@ dataset:
   data_path: dataset/pretrain_pointbert_8192 #Important
   random_rotation: True
 
-mlflow_experiment_name: Binary_Bridge_Backbone_Comparison_cross_entropy
+mlflow_experiment_name: Classification_Backbone_Comparrison
 
 mode: train
 test_path: ./experiments/bruecke/baseline
@@ -17,6 +17,6 @@ epochs: 300
 
 hydra:
   run:
-    dir: ./experiments/bruecke/340_epochs_random_rotation_1024
+    dir: ./experiments/bruecke/20_epochs_1024_best
   job:
     chdir: True

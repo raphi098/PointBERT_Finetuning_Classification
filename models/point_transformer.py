@@ -7,19 +7,22 @@ import lightning as L
 from models.utils import get_missing_parameters_message, get_unexpected_parameters_message, add_weight_decay
 from models.modules import Group, Encoder, TransformerEncoder
 from lightning.pytorch.loggers import MLFlowLogger
-
+import json
+import os
+import matplotlib.pyplot as plt
+from hydra.utils import get_original_cwd
 class PointTransformer(L.LightningModule):
-    def __init__(self, network_cfg, train_cfg, **kwargs):
+    def __init__(self, dataset_cfg, network_cfg, train_cfg, **kwargs):
         super().__init__()
         self.save_hyperparameters()
         self.train_cfg = train_cfg
+        self.dataset_cfg = dataset_cfg
 
         self.trans_dim = network_cfg.trans_dim
         self.depth = network_cfg.depth 
         self.drop_path_rate = network_cfg.drop_path_rate 
         self.num_classes = network_cfg.num_classes 
         self.num_heads = network_cfg.num_heads 
-
         self.group_size = network_cfg.group_size
         self.num_group = network_cfg.num_group
         # grouper
@@ -57,12 +60,22 @@ class PointTransformer(L.LightningModule):
         )
 
         self.loss_ce = nn.CrossEntropyLoss()
+        dataset_path = self.dataset_cfg.data_path
+        category_map_path = os.path.join(get_original_cwd(), dataset_path, "cat_dict.json")
+        self.class_names = []
+        with open(category_map_path, 'r') as f:
+            cat_dict = json.load(f)
+            for key in cat_dict.keys():
+                self.class_names.append((cat_dict[key], key))
+
         if self.num_classes == 2:
+            self.confusion_matrix = BinaryConfusionMatrix()
             self.precision = BinaryAveragePrecision()
             self.recall = BinaryRecall()
             self.accuracy = BinaryAccuracy()    
             self.f1_score = BinaryF1Score()
         else:
+            self.confusion_matrix = MulticlassConfusionMatrix(num_classes=self.num_classes)
             self.precision = MulticlassAveragePrecision(num_classes=self.num_classes, average="weighted")
             self.recall = MulticlassRecall(num_classes=self.num_classes, average="weighted")
             self.accuracy = MulticlassAccuracy(num_classes=self.num_classes, average="weighted")
@@ -84,20 +97,22 @@ class PointTransformer(L.LightningModule):
         # forward
         class_pred = self.forward(points)  # [B, C] log-probs
         label_id = class_pred.argmax(dim=1)   # [B, N]
-         
+        class_label_flat = class_label.reshape(-1)             # [B]
+        class_pred_flat  = class_pred.reshape(-1, self.num_classes)  # [B, C]
         # metrics
         metrics = {}
 
         metrics["train/acc" if train else "val/acc"]   = (label_id == class_label).float().mean()
-        # loss
-        class_label_flat = class_label.reshape(-1)             # [B]
- 
         metrics["train/loss" if train else "val/loss"] = self.loss_ce(class_pred, class_label_flat)       # [B, C] logits
+        if not train:
+            metrics["val/f1_score"] = self.f1_score(class_pred_flat, class_label_flat)
+            metrics["val/precision"] = self.precision(class_pred_flat, class_label_flat)
+            metrics["val/recall"] = self.recall(class_pred_flat, class_label_flat)
 
         for key, value in metrics.items():
             self.log(key, value, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
         return metrics["train/loss" if train else "val/loss"]
-    
+
     def test_step(self, batch, batch_idx):
         points, class_label = batch  # [B, N, C], [B, N], [B]
 
@@ -108,9 +123,8 @@ class PointTransformer(L.LightningModule):
         class_pred, _ = self.forward(points)          # [B, N, C] logits
   
         # metrics
-
         class_pred_flat     = class_pred.reshape(-1, self.num_classes)
-
+        self.confusion_matrix.update(class_pred_flat, class_label)
         #metrics
         metrics = {}
         metrics["test/acc"]   = self.accuracy(class_pred_flat, class_label)
@@ -121,16 +135,25 @@ class PointTransformer(L.LightningModule):
         # logging
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
         return {"test_loss": metrics["test/loss"]}
-    
-    def _get_mlf_logger(self):
-        # trainer can hold multiple loggers; pick the MLflow one
-        if isinstance(self.trainer.logger, MLFlowLogger):
-            return self.trainer.logger
-        for lg in self.trainer.loggers if isinstance(self.trainer.loggers, (list, tuple)) else []:
-            if isinstance(lg, MLFlowLogger):
-                return lg
-        return None
+    def on_test_epoch_end(self):
+        cm = self.confusion_matrix.compute()
+        fig, ax = self.confusion_matrix.plot(cm, labels=self.class_names, cmap="Blues")
+        fig.set_size_inches(10, 10)
+        ax.tick_params(axis='both', labelsize=14)
+        mlf_logger = self._get_mlf_logger()
+        if mlf_logger is not None:
+            mlf_logger.experiment.log_figure(
+                figure=fig,
+                artifact_file=f"confusion_matrix/test_confusion_matrix_.png",
+                run_id=mlf_logger.run_id
+            )
+        print(f"Confusion matrix saved to test_confusion_matrix_.png")
+        plt.savefig(f"test_confusion_matrix_.png")
+        plt.close(fig)
+        self.confusion_matrix.reset()
+
     def load_backbone_from_ckpt(self, bert_ckpt_path):
         ckpt = torch.load(bert_ckpt_path, weights_only=False)
         print("Checkpoint keys:", ckpt.keys())
