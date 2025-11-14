@@ -116,10 +116,7 @@ class PointTransformer(L.LightningModule):
                 self.log(f"val/{key}", self.val_metrics[key], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss["train/loss" if train else "val/loss"]
-    def on_train_epoch_end(self):
-        self.precision.reset()
-        self.recall.reset()
-        self.accuracy.reset()
+
     def on_validation_epoch_end(self):
         self.precision.reset()
         self.recall.reset()
