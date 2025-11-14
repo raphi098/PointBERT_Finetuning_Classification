@@ -92,7 +92,7 @@ class PointTransformer(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         loss = self._common_step(batch, train=False)
-        return loss
+        return {"val/loss": loss}
 
     def _common_step(self, batch, train=True):
         points, class_label = batch
