@@ -11,6 +11,7 @@ import json
 import os
 import matplotlib.pyplot as plt
 from hydra.utils import get_original_cwd
+from torchmetrics import MetricCollection
 
 class PointTransformer(L.LightningModule):
     def __init__(self, dataset_cfg, network_cfg, train_cfg, **kwargs):
@@ -69,23 +70,26 @@ class PointTransformer(L.LightningModule):
             for key in cat_dict.keys():
                 self.class_names.append((cat_dict[key], key))
         
-        self.val_metrics = {}
+        self.val_metrics_dict = {}
 
         if self.num_classes == 2:
-            self.precision = BinaryAveragePrecision()
-            self.recall = BinaryRecall()
-            self.accuracy = BinaryAccuracy()    
-            self.f1_score = BinaryF1Score()
+            self.val_metrics_dict["precision"] = BinaryAveragePrecision()
+            self.val_metrics_dict["recall"] = BinaryRecall()
+            self.val_metrics_dict["accuracy"] = BinaryAccuracy()    
+            self.val_metrics_dict["f1_score"] = BinaryF1Score()
             self.confusion_matrix = BinaryConfusionMatrix()
         else:
             self.confusion_matrix = MulticlassConfusionMatrix(num_classes=self.num_classes)
-            self.precision = MulticlassAveragePrecision(num_classes=self.num_classes, average="weighted")
-            self.recall = MulticlassRecall(num_classes=self.num_classes, average="weighted")
-            self.accuracy = MulticlassAccuracy(num_classes=self.num_classes, average="weighted")
-            self.f1_score = MulticlassF1Score(num_classes=self.num_classes, average="weighted")
+            self.val_metrics_dict["precision"] = MulticlassAveragePrecision(num_classes=self.num_classes, average="weighted")
+            self.val_metrics_dict["recall"] = MulticlassRecall(num_classes=self.num_classes, average="weighted")
+            self.val_metrics_dict["accuracy"] = MulticlassAccuracy(num_classes=self.num_classes, average="weighted")
+            self.val_metrics_dict["f1_score"] = MulticlassF1Score(num_classes=self.num_classes, average="weighted")
 
-        self.test_metrics = self.val_metrics.copy()
-        self.test_metrics["confusion_matrix"] = self.confusion_matrix
+        self.val_metrics = MetricCollection(self.val_metrics_dict)
+        self.test_metrics_dict = self.val_metrics_dict.copy()
+        self.test_metrics_dict["confusion_matrix"] = self.confusion_matrix
+        self.test_metrics = MetricCollection(self.test_metrics_dict)
+
     def training_step(self, batch, batch_idx):
         loss = self._common_step(batch, train=True)
         return loss
@@ -111,31 +115,23 @@ class PointTransformer(L.LightningModule):
         self.log("train/loss" if train else "val/loss", loss["train/loss" if train else "val/loss"])       # [B, C] logits
 
         if not train:
-            for key, value in self.val_metrics.keys():
-                self.val_metrics[key].update(class_pred_flat, class_label_flat)
-                self.log(f"val/{key}", self.val_metrics[key], prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+            for name, metric in self.val_metrics.items():
+                metric.update(class_pred_flat, class_label_flat)
+                self.log(f"val/{name}", metric, on_step=False, on_epoch=True)
 
         return loss["train/loss" if train else "val/loss"]
 
-    def on_validation_epoch_end(self):
-        self.precision.reset()
-        self.recall.reset()
-        self.accuracy.reset()
-        self.f1_score.reset()
     def test_step(self, batch, batch_idx):
         points, class_label = batch  # [B, N, C], [B, N], [B]
 
         # forward
         class_pred, _ = self.forward(points)          # [B, N, C] logits
         class_pred_flat     = class_pred.reshape(-1, self.num_classes)
-        self.confusion_matrix.update(class_pred_flat, class_label)
-
-        metrics = {}
-        metrics["test/acc"]   = self.accuracy(class_pred_flat, class_label)
-        metrics["test/f1_score"] = self.f1_score(class_pred_flat, class_label)
-        metrics["test/precision"] = self.precision(class_pred_flat, class_label)
-        metrics["test/recall"] = self.recall(class_pred_flat, class_label)
-        metrics["test/loss"] = self.loss_ce(class_pred_flat, class_label)
+        class_label_flat    = class_label.reshape(-1)
+        
+        for name, metric in self.test_metrics.items():
+            metric.update(class_pred_flat, class_label_flat)
+            self.log(f"test/{name}", metric, on_step=False, on_epoch=True)
 
         # logging
         for key, value in metrics.items():
