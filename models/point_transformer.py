@@ -11,6 +11,7 @@ import json
 import os
 import matplotlib.pyplot as plt
 from hydra.utils import get_original_cwd
+
 class PointTransformer(L.LightningModule):
     def __init__(self, dataset_cfg, network_cfg, train_cfg, **kwargs):
         super().__init__()
@@ -99,9 +100,9 @@ class PointTransformer(L.LightningModule):
         label_id = class_pred.argmax(dim=1)   # [B, N]
         class_label_flat = class_label.reshape(-1)             # [B]
         class_pred_flat  = class_pred.reshape(-1, self.num_classes)  # [B, C]
+
         # metrics
         metrics = {}
-
         metrics["train/acc" if train else "val/acc"]   = (label_id == class_label).float().mean()
         metrics["train/loss" if train else "val/loss"] = self.loss_ce(class_pred, class_label_flat)       # [B, C] logits
         if not train:
@@ -116,32 +117,31 @@ class PointTransformer(L.LightningModule):
     def test_step(self, batch, batch_idx):
         points, class_label = batch  # [B, N, C], [B, N], [B]
 
-        # dtypes
-        class_label  = class_label
-
         # forward
         class_pred, _ = self.forward(points)          # [B, N, C] logits
-  
-        # metrics
         class_pred_flat     = class_pred.reshape(-1, self.num_classes)
         self.confusion_matrix.update(class_pred_flat, class_label)
-        #metrics
+
         metrics = {}
         metrics["test/acc"]   = self.accuracy(class_pred_flat, class_label)
         metrics["test/f1_score"] = self.f1_score(class_pred_flat, class_label)
         metrics["test/precision"] = self.precision(class_pred_flat, class_label)
         metrics["test/recall"] = self.recall(class_pred_flat, class_label)
         metrics["test/loss"] = self.loss_ce(class_pred_flat, class_label)
+
         # logging
         for key, value in metrics.items():
             self.log(f"test/{key}", value, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
         return {"test_loss": metrics["test/loss"]}
+
     def on_test_epoch_end(self):
         cm = self.confusion_matrix.compute()
         fig, ax = self.confusion_matrix.plot(cm, labels=self.class_names, cmap="Blues")
         fig.set_size_inches(10, 10)
         ax.tick_params(axis='both', labelsize=14)
+
+        # Get attached MLFlow logger
         mlf_logger = self._get_mlf_logger()
         if mlf_logger is not None:
             mlf_logger.experiment.log_figure(
@@ -149,8 +149,9 @@ class PointTransformer(L.LightningModule):
                 artifact_file=f"confusion_matrix/test_confusion_matrix_.png",
                 run_id=mlf_logger.run_id
             )
-        print(f"Confusion matrix saved to test_confusion_matrix_.png")
-        plt.savefig(f"test_confusion_matrix_.png")
+
+        # Save locally as well
+        plt.savefig(f"test_confusion_matrix.png")
         plt.close(fig)
         self.confusion_matrix.reset()
 
@@ -206,6 +207,7 @@ class PointTransformer(L.LightningModule):
     
     
     def configure_optimizers(self):
+        # No cosine optimizer with warmup in torch
         param_groups = add_weight_decay(
             self,
             weight_decay=self.train_cfg.decay_rate
