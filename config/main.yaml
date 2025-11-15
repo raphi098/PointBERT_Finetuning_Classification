@@ -11,7 +11,7 @@ dataset:
 
 mlflow_experiment_name: Classification_Backbone_Comparrison
 
-mode: test
+mode: train
 test_path: ./experiments/bruecke/500_epochs_1024
 epochs: 300
 

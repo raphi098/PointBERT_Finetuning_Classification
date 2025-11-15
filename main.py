@@ -52,6 +52,9 @@ if __name__ == "__main__":
                  'hydra/hydra_logging=disabled', 
                  'hydra/job_logging=disabled'])
                  
+        if not os.path.exists(run_dir):
+            raise ValueError(f"Test directory {run_dir} does not exist. Please provide a valid test directory.")
+                 
     if cfg.mode == "train" and os.path.exists(run_dir):
         raise ValueError(f"Output directory {run_dir} already exists. Please choose a different directory or remove the existing one.")
     main()
