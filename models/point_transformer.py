@@ -73,13 +73,13 @@ class PointTransformer(L.LightningModule):
         self.val_metrics_dict = {}
 
         if self.num_classes == 2:
+            self.confusion_matrix = BinaryConfusionMatrix()
             self.val_metrics_dict["precision"] = BinaryAveragePrecision()
             self.val_metrics_dict["recall"] = BinaryRecall()
             self.val_metrics_dict["accuracy"] = BinaryAccuracy()    
             self.val_metrics_dict["f1_score"] = BinaryF1Score()
-            self.confusion_matrix = BinaryConfusionMatrix()
         else:
-            self.confusion_matrix = MulticlassConfusionMatrix(num_classes=self.num_classes)
+            self.confusion_matrix = MulticlassConfusionMatrix(num_classes=self.num_classes, normalize='true')
             self.val_metrics_dict["precision"] = MulticlassAveragePrecision(num_classes=self.num_classes, average="weighted")
             self.val_metrics_dict["recall"] = MulticlassRecall(num_classes=self.num_classes, average="weighted")
             self.val_metrics_dict["accuracy"] = MulticlassAccuracy(num_classes=self.num_classes, average="weighted")
@@ -125,19 +125,19 @@ class PointTransformer(L.LightningModule):
         points, class_label = batch  # [B, N, C], [B, N], [B]
 
         # forward
-        class_pred, _ = self.forward(points)          # [B, N, C] logits
+        class_pred = self.forward(points)          # [B, N, C] logits
         class_pred_flat     = class_pred.reshape(-1, self.num_classes)
         class_label_flat    = class_label.reshape(-1)
         
         for name, metric in self.test_metrics.items():
             metric.update(class_pred_flat, class_label_flat)
-            self.log(f"test/{name}", metric, on_step=False, on_epoch=True)
+            if name != "confusion_matrix":
+                self.log(f"test/{name}", metric, on_step=False, on_epoch=True)
 
-        # logging
-        for key, value in metrics.items():
-            self.log(f"test/{key}", value, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        test_loss = self.loss_ce(class_pred_flat, class_label_flat)
+        self.log("test/loss", test_loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
-        return {"test_loss": metrics["test/loss"]}
+        return {"test_loss": test_loss}
 
     def on_test_epoch_end(self):
         cm = self.confusion_matrix.compute()

@@ -11,8 +11,8 @@ dataset:
 
 mlflow_experiment_name: Classification_Backbone_Comparrison
 
-mode: train
-test_path: ./experiments/bruecke/baseline
+mode: test
+test_path: ./experiments/bruecke/20_epochs_1024_best
 epochs: 300
 
 hydra:
