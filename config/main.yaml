@@ -12,11 +12,11 @@ dataset:
 mlflow_experiment_name: Classification_Backbone_Comparrison
 
 mode: test
-test_path: ./experiments/bruecke/20_epochs_1024_best
+test_path: ./experiments/bruecke/500_epochs_1024
 epochs: 300
 
 hydra:
   run:
-    dir: ./experiments/bruecke/20_epochs_1024_best
+    dir: ./experiments/bruecke/500_epochs_1024
   job:
     chdir: True

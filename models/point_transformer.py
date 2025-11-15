@@ -90,15 +90,7 @@ class PointTransformer(L.LightningModule):
         self.test_metrics_dict["confusion_matrix"] = self.confusion_matrix
         self.test_metrics = MetricCollection(self.test_metrics_dict)
 
-    def training_step(self, batch, batch_idx):
-        loss = self._common_step(batch, train=True)
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        loss = self._common_step(batch, train=False)
-        return {"val/loss": loss}
-
-    def _common_step(self, batch, train=True):
+    def _common_step(self, batch):
         points, class_label = batch
         # dtypes
         class_label  = class_label
@@ -108,34 +100,38 @@ class PointTransformer(L.LightningModule):
         label_id = class_pred.argmax(dim=1)   # [B, N]
         class_label_flat = class_label.reshape(-1)             # [B]
         class_pred_flat  = class_pred.reshape(-1, self.num_classes)  # [B, C]
+        return class_pred_flat, class_label_flat
 
-        # metrics
-        loss = {}
-        loss["train/loss" if train else "val/loss"] = self.loss_ce(class_pred_flat, class_label_flat)
-        self.log("train/loss" if train else "val/loss", loss["train/loss" if train else "val/loss"])       # [B, C] logits
+    def training_step(self, batch, batch_idx):
+        class_pred_flat, class_label_flat = self._common_step(batch)
+        
+        train_loss = self.loss_ce(class_pred_flat, class_label_flat)
+        self.log("train/loss", train_loss)
 
-        if not train:
-            for name, metric in self.val_metrics.items():
-                metric.update(class_pred_flat, class_label_flat)
-                self.log(f"val/{name}", metric, on_step=False, on_epoch=True)
+        return train_loss
+    
+    def validation_step(self, batch, batch_idx):
+        class_pred_flat, class_label_flat = self._common_step(batch)
+        
+        val_loss = self.loss_ce(class_pred_flat, class_label_flat)
+        self.log("val/loss", val_loss)
 
-        return loss["train/loss" if train else "val/loss"]
+        for name, metric in self.val_metrics.items():
+            metric.update(class_pred_flat, class_label_flat)
+            self.log(f"val/{name}", metric, on_step=False, on_epoch=True)
+
+        return {"val/loss": val_loss}
 
     def test_step(self, batch, batch_idx):
-        points, class_label = batch  # [B, N, C], [B, N], [B]
-
-        # forward
-        class_pred = self.forward(points)          # [B, N, C] logits
-        class_pred_flat     = class_pred.reshape(-1, self.num_classes)
-        class_label_flat    = class_label.reshape(-1)
+        class_pred_flat, class_label_flat = self._common_step(batch)
         
+        test_loss = self.loss_ce(class_pred_flat, class_label_flat)
+        self.log("test/loss", test_loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
         for name, metric in self.test_metrics.items():
             metric.update(class_pred_flat, class_label_flat)
             if name != "confusion_matrix":
                 self.log(f"test/{name}", metric, on_step=False, on_epoch=True)
-
-        test_loss = self.loss_ce(class_pred_flat, class_label_flat)
-        self.log("test/loss", test_loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
         return {"test_loss": test_loss}
 

@@ -1,5 +1,5 @@
 pointbert:
-  pretrained_backbone_filename: 20_epochs_1024_best.pth
+  pretrained_backbone_filename: 500_epochs_1024.pth
   network:
     trans_dim: 384
     depth: 12
