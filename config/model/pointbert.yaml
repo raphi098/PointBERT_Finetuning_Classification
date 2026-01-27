@@ -1,5 +1,5 @@
 pointbert:
-  pretrained_backbone_filename: 500_epochs_1024.pth
+  pretrained_backbone_filename: pt-epoch=39-best.ckpt
   network:
     trans_dim: 384
     depth: 12
@@ -12,15 +12,19 @@ pointbert:
 
 
   training:
-    step_size: 20
+    optimizer:
+      type: AdamW
+      lr: 5e-4
+      weight_decay: 5e-2
+    
+    scheduler: 
+      epochs: ${epochs}
+      initial_epochs : 10
+
     lr_decay: 0.5
-    decay_rate: 5e-2
-    lr: 0.0005
     batch_size: 16
     num_workers: 8
     early_stop_patience: 50
     epochs: ${epochs}
-    warmup_epochs: 10
-    grad_norm_clip : 10
 
 

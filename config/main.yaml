@@ -5,18 +5,18 @@ defaults:
 dataset:
   num_classes: 14   
   npoints: 8192
-  batch_size: 8
+  batch_size: 16
   data_path: dataset/pretrain_pointbert_8192 #Important
-  random_rotation: True
+  random_rotation: False
 
-mlflow_experiment_name: Classification_Backbone_Comparrison
+mlflow_experiment_name: new_classification
 
 mode: train
-test_path: ./experiments/bruecke/500_epochs_1024
+test_path: ./experiments/bruecke/backbone_c5c92391691c4cfcb720b3ac6176454c_best
 epochs: 300
 
 hydra:
   run:
-    dir: ./experiments/bruecke/500_epochs_1024
+    dir: ./experiments/bruecke/backbone_c5c92391691c4cfcb720b3ac6176454c_best
   job:
     chdir: True

@@ -12,6 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from hydra.utils import get_original_cwd
 from torchmetrics import MetricCollection
+from timm.scheduler import CosineLRScheduler
 
 class PointTransformer(L.LightningModule):
     def __init__(self, dataset_cfg, network_cfg, train_cfg, **kwargs):
@@ -102,6 +103,11 @@ class PointTransformer(L.LightningModule):
         class_pred_flat  = class_pred.reshape(-1, self.num_classes)  # [B, C]
         return class_pred_flat, class_label_flat
 
+    def on_train_epoch_start(self):
+        if self.current_epoch == 5:
+            for p in self.parameters():
+                p.requires_grad = True
+
     def training_step(self, batch, batch_idx):
         class_pred_flat, class_label_flat = self._common_step(batch)
         
@@ -158,10 +164,12 @@ class PointTransformer(L.LightningModule):
     def load_backbone_from_ckpt(self, bert_ckpt_path):
         ckpt = torch.load(bert_ckpt_path, weights_only=False)
         print("Checkpoint keys:", ckpt.keys())
+        # For .pth files in original pointbert implementation
         if 'base_model' in ckpt:
             base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['base_model'].items()}
-        else:
-            base_ckpt = {k.replace("module.", ""): v for k, v in ckpt.items()}
+        #For new pytorch lightning implementation
+        elif 'state_dict' in ckpt:
+            base_ckpt = {k.replace("module.", ""): v for k, v in ckpt['state_dict'].items()}
         for k in list(base_ckpt.keys()):
             if k.startswith('transformer_q') and not k.startswith('transformer_q.cls_head'):
                 base_ckpt[k[len('transformer_q.'):]] = base_ckpt[k]
@@ -170,6 +178,12 @@ class PointTransformer(L.LightningModule):
             del base_ckpt[k]
 
         incompatible = self.load_state_dict(base_ckpt, strict=False)
+        # Freeze backbone will be unfrozen after 5 epochs
+
+        for name, p in self.named_parameters():
+            if not name.startswith("cls_head_finetune"):
+                p.requires_grad = False
+
 
         if incompatible.missing_keys:
             print('missing_keys')
@@ -205,38 +219,27 @@ class PointTransformer(L.LightningModule):
         ret = self.cls_head_finetune(concat_f)
         return ret
     
-    
     def configure_optimizers(self):
-        # No cosine optimizer with warmup in torch
-        param_groups = add_weight_decay(
-            self,
-            weight_decay=self.train_cfg.decay_rate
+
+        named_params = self.named_parameters()   
+        param_groups = self.add_weight_decay(
+            named_params,
+            weight_decay=self.train_cfg.optimizer.weight_decay,
+            skip_list=(),
         )
 
-        optimizer = torch.optim.AdamW(
-            param_groups,
-            lr=self.train_cfg.lr
-        )
+        optimizer = torch.optim.AdamW(param_groups, lr=self.train_cfg.optimizer.lr )
 
-        warmup_epochs = self.train_cfg.warmup_epochs
-        total_epochs = self.train_cfg.epochs
-
-        warmup_scheduler = LinearLR(
+        scheduler = CosineLRScheduler(
             optimizer,
-            start_factor=1e-6 / self.train_cfg.lr,  # starting LR relative to base LR
-            total_iters=warmup_epochs
-        )
-
-        cosine_scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=total_epochs - warmup_epochs,
-            eta_min=1e-6
-        )
-
-        scheduler = SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[warmup_epochs]
+            t_initial=self.train_cfg.scheduler.epochs,
+            cycle_mul=1,
+            lr_min=1e-6,
+            cycle_decay=0.1,
+            warmup_lr_init=1e-6,
+            warmup_t=self.train_cfg.scheduler.initial_epochs,
+            cycle_limit=1,
+            t_in_epochs=True,
         )
 
         return {
@@ -245,8 +248,31 @@ class PointTransformer(L.LightningModule):
                 "scheduler": scheduler,
                 "interval": "epoch",
                 "frequency": 1,
-            }
-        }    
+            },
+        }
+
+    def lr_scheduler_step(self, scheduler, metric=None):
+        # timm scheduler expects epoch passed in (for t_in_epochs=True)
+        scheduler.step(epoch=self.current_epoch)
+
+    @staticmethod
+    def add_weight_decay(named_params, weight_decay=1e-5, skip_list=()):
+        decay, no_decay = [], []
+        for name, param in named_params:
+            if (
+                param.ndim == 1
+                or name.endswith(".bias")
+                or "token" in name
+                or name in skip_list
+            ):
+                no_decay.append(param)
+            else:
+                decay.append(param)
+
+        return [
+            {"params": no_decay, "weight_decay": 0.0},
+            {"params": decay, "weight_decay": weight_decay},
+        ]
 
     def _get_mlf_logger(self):
         # trainer can hold multiple loggers; pick the MLflow one
